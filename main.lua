@@ -1,3 +1,5 @@
+require "Palette"
+require "Sprites"
 local function try_require(name)
     local ok, res = pcall(require, name)
     if ok then
