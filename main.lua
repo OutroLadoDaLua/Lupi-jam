@@ -1,5 +1,12 @@
-require "palette"
-require "sprites"
+local function try_require(name)
+    local ok, res = pcall(require, name)
+    if ok then
+        ui.log("OK: " .. name .. " (" .. type(res) .. ")")
+        return res
+    end
+    ui.log("FALHOU: " .. name .. " -> " .. tostring(res))
+    return nil
+end
 
 -- ============================================================
 -- CONFIG DE ASSETS  (AJUSTE AQUI)
