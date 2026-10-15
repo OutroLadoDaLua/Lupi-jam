@@ -71,7 +71,7 @@ function update(frame)
     end
 
     player.x = clamp(player.x, 0, 480)
-    player.y = clamp(player.y, 0, 260)
+    player.y = clamp(player.y, 0, 270)
 
     move_enemies()
 
@@ -85,7 +85,7 @@ function update(frame)
     -- -------- DESENHO --------
     ui.cls(0)
     ui.camera(0, 0)
-    ui.clip(0, 0, 480, 270)
+    ui.clip(0, 0, 480, 260)
 
     -- jogador (retângulo preenchido)
     ui.rectfill(player.x, player.y,
