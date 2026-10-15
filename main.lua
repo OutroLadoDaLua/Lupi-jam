@@ -354,4 +354,257 @@ local function try_attack()
     if attack.cooldown > 0 or attack.active then return end
     attack.active = true
     attack.timer = attack.duration
-    attack.cooldown =
+    attack.cooldown = attack.cooldown_max
+    attack.hit = {}
+end
+
+local function attack_hitbox()
+    local cx = player.x + player.w / 2
+    local cy = player.y + player.h / 2
+    return {
+        x = cx + facing.x * attack.range - attack.w / 2,
+        y = cy + facing.y * attack.range - attack.h / 2,
+        w = attack.w, h = attack.h,
+    }
+end
+
+local function update_attack()
+    if attack.cooldown > 0 then attack.cooldown = attack.cooldown - 1 end
+    if not attack.active then return end
+
+    attack.timer = attack.timer - 1
+    if attack.timer <= 0 then
+        attack.active = false
+        return
+    end
+
+    -- invulneravel durante o golpe
+    if player.invuln < attack.timer then player.invuln = attack.timer end
+
+    local hb = attack_hitbox()
+    for i = #enemies, 1, -1 do
+        local e = enemies[i]
+        if not attack.hit[e] and rect_overlap(hb, e) then
+            attack.hit[e] = true
+            e.hp = e.hp - ATTACK_DAMAGE
+            if e.hp <= 0 then table.remove(enemies, i) end
+        end
+    end
+end
+
+-- ============================================================
+-- TRANSICAO / GAMEOVER / ESCURECIMENTO
+-- ============================================================
+local function update_chapter()
+    if #enemies > 0 then
+        chapter_clear_timer = 0
+    else
+        chapter_clear_timer = chapter_clear_timer + 1
+    end
+end
+
+local function check_gameover()
+    if player.hp <= 0 and not gameover then gameover = true end
+end
+
+local function update_darkness()
+    darkness = darkness + #projectiles * PROJ_DARK_PER_FRAME
+    darkness = darkness - DECAY_PER_FRAME
+    darkness = math.max(0, math.min(MAX_DARK, darkness))
+end
+
+-- ============================================================
+-- INPUT  (ui.btn ja cobre A/W/S/D no simulador)
+-- ============================================================
+local function handle_input()
+    local speed = 2
+    local moved = false
+
+    if ui.btn(LEFT)  then player.x = player.x - speed; facing.x, facing.y = -1, 0; moved = true end
+    if ui.btn(RIGHT) then player.x = player.x + speed; facing.x, facing.y =  1, 0; moved = true end
+    if ui.btn(UP)    then player.y = player.y - speed; facing.x, facing.y =  0,-1; moved = true end
+    if ui.btn(DOWN)  then player.y = player.y + speed; facing.x, facing.y =  0, 1; moved = true end
+
+    player.moving = moved
+    drain_text()
+
+    player.x = clamp(player.x, 0, 480 - player.w)
+    player.y = clamp(player.y, 0, 270 - player.h)
+
+    if ui.btnp(BTN_Z) then try_attack() end
+end
+
+-- ============================================================
+-- HUD
+-- ============================================================
+local function draw_hp_bar(x, y, w, h)
+    local pct = player.hp / player.max_hp
+
+    ui.rectfill(x - 1, y - 1, x + w + 1, y + h + 1, 0)
+    ui.rectfill(x, y, x + w, y + h, 2)
+
+    local cor
+    if     pct > 0.6 then cor = 11
+    elseif pct > 0.3 then cor = 10
+    else                  cor = 8 end
+
+    local fill_w = math.floor(w * pct)
+    if fill_w > 0 then ui.rectfill(x, y, x + fill_w, y + h, cor) end
+
+    ui.rect(x - 1, y - 1, x + w + 1, y + h + 1, 15)
+    ui.print("HP " .. player.hp .. "/" .. player.max_hp, x + w + 6, y - 2, 15)
+end
+
+-- ============================================================
+-- TELAS ESTATICAS
+-- ============================================================
+local function draw_fullscreen(ref, fallback_text)
+    ui.cls(0)
+    ui.camera(0, 0)
+    ui.clip(0, 0, 480, 270)
+    if ref then
+        ui.spr(ref, (480 - SCREEN_W) / 2, (270 - SCREEN_H) / 2)
+    else
+        ui.print(fallback_text or "?", 200, 120, 15)
+    end
+end
+
+local function draw_press_any(y)
+    if math.floor(state_timer / 30) % 2 == 0 then
+        ui.print("Pressione qualquer botao", 160, y or 240, 15)
+    end
+end
+
+-- ============================================================
+-- DESENHO DO JOGO
+-- ============================================================
+local function draw_scene(frame)
+    ui.cls(0)
+    ui.camera(0, 0)
+    ui.clip(0, 0, 480, 270)
+
+    -- inimigos
+    for _, e in ipairs(enemies) do
+        local drawn = draw_sprite(SPR.inimigo_andar, e.x, e.y, e.w, e.h, e.flip, anim_t)
+        if not drawn then
+            ui.circfill(e.x + e.w / 2, e.y + e.h / 2, radius(e), e.color)
+        end
+        if e.max_hp > 1 then
+            local bx = e.x + e.w / 2 - e.w
+            local bw = e.w * 2
+            ui.rectfill(bx, e.y - 8, bx + bw, e.y - 5, 2)
+            ui.rectfill(bx, e.y - 8, bx + bw * (e.hp / e.max_hp), e.y - 5, 11)
+        end
+    end
+
+    -- jogador (pisca durante i-frame, mas nao durante o golpe)
+    local blink = player.invuln > 0 and not attack.active
+                  and (math.floor(player.invuln / 4) % 2 == 0)
+    if not blink then
+        local flip = facing.x < 0
+        local drawn
+        if attack.active then
+            local prog = (attack.duration - attack.timer) / attack.duration
+            local f = math.floor(prog * SPR.jogador_ataque.frames)
+            drawn = draw_sprite(SPR.jogador_ataque, player.x, player.y,
+                                player.w, player.h, flip, anim_t, f)
+        elseif player.moving then
+            drawn = draw_sprite(SPR.jogador_andar, player.x, player.y,
+                                player.w, player.h, flip, anim_t)
+        else
+            -- parado: primeiro frame da animacao de andar
+            drawn = draw_sprite(SPR.jogador_andar, player.x, player.y,
+                                player.w, player.h, flip, anim_t, 0)
+        end
+        if not drawn then
+            ui.rectfill(player.x, player.y, player.x + player.w, player.y + player.h, 7)
+        end
+    end
+
+    -- hitbox do ataque (so aparece se nao houver sprite de ataque)
+    if attack.active and not SPR.jogador_ataque.ref then
+        local hb = attack_hitbox()
+        ui.rectfill(hb.x, hb.y, hb.x + hb.w, hb.y + hb.h, 15)
+    end
+
+    -- projeteis
+    for _, p in ipairs(projectiles) do
+        ui.rectfill(p.x, p.y, p.x + p.w, p.y + p.h, p.color)
+    end
+
+    -- HUD
+    ui.print("Cap " .. chapter .. " - Frame: " .. frame, 4, 4, 15)
+    ui.print("Inimigos: " .. #enemies, 4, 14, 15)
+    ui.print(string.format("Escuridao: %.0f%%", darkness * 100), 4, 24, 15)
+    draw_hp_bar(10, 40, 60, 6)
+
+    if #enemies == 0 and chapter_clear_timer > 0 then
+        ui.print("CAP " .. chapter .. " LIMPO!", 180, 120, 11)
+    end
+end
+
+-- ============================================================
+-- LOOP PRINCIPAL
+-- ============================================================
+function loop(frame)
+    anim_t = anim_t + 1
+
+    -- paleta escurecida (obrigatorio todo frame)
+    update_darkness()
+    for i = 1, #Palette do
+        ui.palset(i - 1, darken_color(Palette[i], darkness))
+    end
+    if player.invuln > 0 then player.invuln = player.invuln - 1 end
+
+    state_timer = state_timer + 1
+    local ready = state_timer > STATE_MIN_TIME
+
+    if state == "title" then
+        draw_fullscreen(title_ref, "TITULO")
+        draw_press_any()
+        if any_button_pressed() and ready then set_state("intro1") end
+
+    elseif state == "intro1" then
+        draw_fullscreen(intro_ref, "INICIO")
+        draw_press_any()
+        if any_button_pressed() and ready then set_state("play1") end
+
+    elseif state == "play1" or state == "play2" then
+        handle_input()
+        update_attack()
+        move_enemies()
+        update_projectiles()
+        handle_collisions()
+        update_chapter()
+        draw_scene(frame)
+
+        check_gameover()
+        if gameover then
+            set_state("gameover")
+        elseif chapter_clear_timer >= CLEAR_DELAY then
+            set_state(state == "play1" and "intro2" or "ending")
+        end
+
+    elseif state == "intro2" then
+        ui.cls(0)
+        ui.camera(0, 0)
+        ui.clip(0, 0, 480, 270)
+        ui.print("CAPITULO 2", 200, 115, 15)
+        draw_press_any(145)
+        if any_button_pressed() and ready then set_state("play2") end
+
+    elseif state == "ending" then
+        draw_fullscreen(final_ref, "FINAL")
+        draw_press_any()
+        if any_button_pressed() and ready then set_state("title") end
+
+    elseif state == "gameover" then
+        ui.cls(0)
+        ui.print("GAME OVER", 200, 120, 8)
+        draw_press_any(145)
+        if any_button_pressed() and ready then set_state("title") end
+    end
+end
+
+-- alias para runtimes que chamam "update" direto (game.lua redefine isso)
+update = loop
