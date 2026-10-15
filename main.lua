@@ -2,7 +2,12 @@ require "palette"
 require "sprites"
 
 -- ============ ASSETS DE TELA ============
+-- As imagens sao 240x135 (metade da resolucao 480x270).
+-- O pipeline Lua provavelmente as expoe como modulos em "assets.*".
+-- pcall evita crash se algum arquivo faltar.
+
 local title_ref, intro_ref, final_ref
+
 pcall(function() title_ref = require "assets.titulo" end)
 pcall(function() intro_ref = require "assets.inicio" end)
 pcall(function() final_ref = require "assets.final"  end)
@@ -42,6 +47,19 @@ local function clamp(v, lo, hi)
     if v < lo then return lo end
     if v > hi then return hi end
     return v
+end
+
+local function draw_fullscreen(ref, fallback_text)
+    ui.cls(0)
+    ui.camera(0, 0)
+    ui.clip(0, 0, 480, 270)
+    if ref then
+        -- imagem 240x135 → centraliza em 480x270
+        -- se o console for 240x135 interno, troque por (0, 0)
+        ui.spr(ref, (480 - 240) / 2, (270 - 135) / 2)
+    else
+        ui.print(fallback_text or "?", 200, 120, 15)
+    end
 end
 
 local function radius(o) return math.max(o.w, o.h) / 2 end
@@ -347,6 +365,20 @@ end
 
 -- ============ LOOP PRINCIPAL ============
 function loop(frame)
+
+    if frame == 1 then
+    ui.cls(0)
+    -- retangulo nos 4 cantos do suposto canvas 480x270
+    ui.rect(0, 0, 479, 269, 15)          -- contorno da tela inteira
+    -- retangulo em 240x135
+    ui.rect(0, 0, 239, 134, 8)           -- contorno do "meio"
+    -- linhas de referencia
+    ui.line(240, 0, 240, 270, 11)        -- linha central vertical
+    ui.line(0, 135, 480, 135, 11)        -- linha central horizontal
+    ui.print("480x270 box", 4, 4, 15)
+    ui.print("240x135 box", 4, 140, 8)
+end
+
     -- paleta (escurecida conforme darkness)
     update_darkness()
     for i = 1, #Palette do
