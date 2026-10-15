@@ -2,6 +2,8 @@ require "palette"
 require "sprites"
 
 -- ============ ASSETS DE TELA ============
+-- Fallback: se o pipeline ainda nao gerou .lua para os PNGs,
+-- o require falha e usamos texto. Nao crasha.
 local title_ref, intro_ref, final_ref
 pcall(function() title_ref = require "assets.titulo" end)
 pcall(function() intro_ref = require "assets.inicio" end)
@@ -37,7 +39,7 @@ local HIT_DARK_BURST      = 0.06
 local HIT_DAMAGE     = 1
 local CONTACT_DAMAGE = 1
 
--- Ataque do jogador
+-- Ataque
 local attack = {
     active = false,
     timer = 0,
@@ -48,10 +50,7 @@ local attack = {
     w = 20, h = 20
 }
 
--- Direcao que o jogador olha
 local facing = { x = 1, y = 0 }
-
--- Fim de jogo
 local gameover = false
 
 -- ============ UTIL ============
@@ -73,20 +72,26 @@ local function rect_overlap(a, b)
        and a.y < b.y + b.h and a.y + a.h > b.y
 end
 
+-- Escurece cor no formato BGR555 do Lupi.
+-- Layout: 0BBBBBGGGGGRRRRR
+--   bits 10-14 = B, bits 5-9 = G, bits 0-4 = R
+-- Se no console real as cores sairem invertidas (vermelho<->azul),
+-- troque os indices: b passa a ser R e vice-versa.
 local function darken_color(c, f)
     if f <= 0 then return c end
-    local r = math.floor(c / 1024) % 32
+    local b = math.floor(c / 1024) % 32
     local g = math.floor(c / 32)   % 32
-    local b = c % 32
+    local r = c % 32
     local k = 1 - f
     r = math.floor(r * k)
     g = math.floor(g * k)
     b = math.floor(b * k)
-    return r * 1024 + g * 32 + b
+    return b * 1024 + g * 32 + r
 end
 
 local function any_button_pressed()
-    local btns = { BTN_Z, BTN_X, BTN_F, BTN_G, BTN_Q, BTN_E,
+    -- BTN_X NAO existe no Lupi, conforme README secao 7.
+    local btns = { BTN_Z, BTN_Q, BTN_E, BTN_F, BTN_G,
                    LEFT, RIGHT, UP, DOWN }
     for _, b in ipairs(btns) do
         if b and ui.btnp and ui.btnp(b) then return true end
@@ -276,12 +281,11 @@ local function update_attack()
         return
     end
 
-    -- durante o ataque o jogador esta invulneravel
+    -- invulneravel durante o golpe
     if player.invuln < attack.timer then
         player.invuln = attack.timer
     end
 
-    -- dano em inimigos dentro da hitbox
     local hb = attack_hitbox()
     for i = #enemies, 1, -1 do
         local e = enemies[i]
@@ -293,7 +297,7 @@ local function update_attack()
     end
 end
 
--- ============ TRANSICAO DE CAPITULO ============
+-- ============ TRANSICAO ============
 local function update_chapter(frame)
     if #enemies > 0 then
         chapter_clear_timer = 0
@@ -302,7 +306,6 @@ local function update_chapter(frame)
     end
 end
 
--- ============ FIM DE JOGO ============
 local function check_gameover()
     if player.hp <= 0 and not gameover then
         gameover = true
@@ -337,7 +340,8 @@ local function handle_input()
     player.x = clamp(player.x, 0, 480 - player.w)
     player.y = clamp(player.y, 0, 270 - player.h)
 
-    if ui.btnp(BTN_Z) or ui.btnp(BTN_X) then
+    -- Ataque: apenas BTN_Z (BTN_X nao existe no Lupi)
+    if ui.btnp(BTN_Z) then
         try_attack()
     end
 end
@@ -397,7 +401,7 @@ local function draw_scene(frame)
                     player.y + player.h, 7)
     end
 
-    -- hitbox do ataque (visual)
+    -- hitbox do ataque
     if attack.active then
         local hb = attack_hitbox()
         ui.rectfill(hb.x, hb.y, hb.x + hb.w, hb.y + hb.h, 15)
@@ -434,7 +438,7 @@ end
 
 -- ============ LOOP PRINCIPAL ============
 function loop(frame)
-    -- paleta (escurecida conforme darkness)
+    -- paleta escurecida (BGR555)
     update_darkness()
     for i = 1, #Palette do
         ui.palset(i - 1, darken_color(Palette[i], darkness))
