@@ -71,7 +71,7 @@ function update(frame)
     end
 
     player.x = clamp(player.x, 0, 480)
-    player.y = clamp(player.y, 0, 270)
+    player.y = clamp(player.y, 0, 260)
 
     move_enemies()
 
