@@ -1,6 +1,12 @@
 require "palette"
 require "sprites"
 
+-- ============ ASSETS DE TELA ============
+local title_ref, intro_ref, final_ref
+pcall(function() title_ref = require "assets.titulo" end)
+pcall(function() intro_ref = require "assets.inicio" end)
+pcall(function() final_ref = require "assets.final"  end)
+
 -- ============ ESTADO GLOBAL ============
 local player = {
     x = 240, y = 135, w = 10, h = 10,
@@ -14,6 +20,11 @@ local projectiles = {}
 local chapter = 1
 local chapter_clear_timer = 0
 local CLEAR_DELAY = 60
+
+-- Maquina de estados
+local state = "title"       -- title | intro1 | play1 | intro2 | play2
+local state_timer = 0
+local STATE_MIN_TIME = 30   -- 0.5s antes de aceitar "qualquer botao"
 
 -- Escurecimento
 local darkness            = 0
@@ -45,7 +56,6 @@ local function rect_overlap(a, b)
        and a.y < b.y + b.h and a.y + a.h > b.y
 end
 
--- Escurece cor RGB555
 local function darken_color(c, f)
     if f <= 0 then return c end
     local r = math.floor(c / 1024) % 32
@@ -58,14 +68,27 @@ local function darken_color(c, f)
     return r * 1024 + g * 32 + b
 end
 
+-- "Qualquer botao" — checa gamepad + teclado
+local function any_button_pressed()
+    local btns = { BTN_Z, BTN_X, BTN_F, BTN_G, BTN_Q, BTN_E,
+                   LEFT, RIGHT, UP, DOWN }
+    for _, b in ipairs(btns) do
+        if b and ui.btnp and ui.btnp(b) then return true end
+    end
+    if ui.readtext then
+        if ui.readtext() then return true end
+    end
+    return false
+end
+
 -- ============ FABRICAS ============
 local function make_weak_enemy()
     return {
-        x = math.random(240, 460),
-        y = math.random(135, 250),
+        x = math.random(0, 460),
+        y = math.random(0, 250),
         w = 10, h = 10,
         hp = 1, max_hp = 1,
-        speed = 2,
+        speed = 5,
         color = 8
     }
 end
@@ -75,7 +98,7 @@ local function make_strong_enemy()
         x = math.random(300, 450),
         y = math.random(150, 240),
         w = 20, h = 20,
-        hp = 5, max_hp = 5,
+        hp = 10, max_hp = 10,
         speed = 3,
         color = 9,
         knockback = 12,
@@ -129,20 +152,34 @@ local function start_chapter(n)
     projectiles = {}
 
     if n == 1 then
-        enemies = { make_weak_enemy(), make_weak_enemy(), make_weak_enemy() }
+        enemies = { make_weak_enemy(), make_weak_enemy(), make_weak_enemy(),
+                    make_weak_enemy(), make_weak_enemy(), make_weak_enemy(),
+                    make_weak_enemy(), make_weak_enemy(), make_weak_enemy(),
+                    make_weak_enemy() }
     elseif n == 2 then
         enemies = { make_strong_enemy() }
     end
 end
 
-local function init()
+local function reset_player()
     player.x, player.y = 240, 135
     player.hp = player.max_hp
     player.invuln = 0
-    darkness = 0
-    start_chapter(1)
 end
-init()
+
+local function set_state(s)
+    state = s
+    state_timer = 0
+    if s == "play1" then
+        reset_player(); darkness = 0; start_chapter(1)
+    elseif s == "play2" then
+        reset_player(); darkness = 0; start_chapter(2)
+    end
+end
+
+-- inicializa no titulo (nao no play1)
+reset_player()
+start_chapter(1)
 
 -- ============ MOVIMENTO / TIRO ============
 local function move_enemies()
@@ -192,19 +229,12 @@ local function handle_collisions()
     end
 end
 
--- ============ TRANSICAO ============
+-- ============ TRANSICAO (so conta o timer; quem decide eh o loop) ============
 local function update_chapter(frame)
     if #enemies > 0 then
         chapter_clear_timer = 0
-        return
-    end
-    chapter_clear_timer = chapter_clear_timer + 1
-    if chapter_clear_timer >= CLEAR_DELAY then
-        if chapter == 1 then
-            start_chapter(2)
-        else
-            start_chapter(1)
-        end
+    else
+        chapter_clear_timer = chapter_clear_timer + 1
     end
 end
 
@@ -213,6 +243,27 @@ local function update_darkness()
     darkness = darkness + #projectiles * PROJ_DARK_PER_FRAME
     darkness = darkness - DECAY_PER_FRAME
     darkness = math.max(0, math.min(MAX_DARK, darkness))
+end
+
+-- ============ INPUT DE JOGO ============
+local function handle_input()
+    local speed = 2
+    if ui.btn(LEFT)  then player.x = player.x - speed end
+    if ui.btn(RIGHT) then player.x = player.x + speed end
+    if ui.btn(UP)    then player.y = player.y - speed end
+    if ui.btn(DOWN)  then player.y = player.y + speed end
+
+    if ui.readtext then
+        local key = ui.readtext()
+        if     key == "w" then player.y = player.y - speed
+        elseif key == "s" then player.y = player.y + speed
+        elseif key == "a" then player.x = player.x - speed
+        elseif key == "d" then player.x = player.x + speed
+        end
+    end
+
+    player.x = clamp(player.x, 0, 480 - player.w)
+    player.y = clamp(player.y, 0, 270 - player.h)
 end
 
 -- ============ BARRA DE HP ============
@@ -237,13 +288,30 @@ local function draw_hp_bar(x, y, w, h)
     ui.print("HP " .. player.hp .. "/" .. player.max_hp, x + w + 6, y - 2, 15)
 end
 
--- ============ DESENHO ============
+-- ============ TELAS ESTATICAS ============
+local function draw_fullscreen(ref, fallback_text)
+    ui.cls(0)
+    ui.camera(0, 0)
+    ui.clip(0, 0, 480, 270)
+    if ref then
+        ui.spr(ref, 0, 0)
+    else
+        ui.print(fallback_text or "?", 200, 120, 15)
+    end
+end
+
+local function draw_press_any()
+    if math.floor(state_timer / 30) % 2 == 0 then
+        ui.print("Pressione qualquer botao", 160, 240, 15)
+    end
+end
+
+-- ============ DESENHO DO JOGO ============
 local function draw_scene(frame)
     ui.cls(0)
     ui.camera(0, 0)
     ui.clip(0, 0, 480, 270)
 
-    -- jogador (pisca durante i-frame)
     local blink = player.invuln > 0 and (math.floor(player.invuln / 4) % 2 == 0)
     if not blink then
         ui.rectfill(player.x, player.y,
@@ -251,7 +319,6 @@ local function draw_scene(frame)
                     player.y + player.h, 7)
     end
 
-    -- inimigos
     for _, e in ipairs(enemies) do
         ui.circfill(e.x + e.w / 2, e.y + e.h / 2, radius(e), e.color)
         if e.max_hp > 1 then
@@ -264,61 +331,75 @@ local function draw_scene(frame)
         end
     end
 
-    -- projeteis
     for _, p in ipairs(projectiles) do
         ui.rectfill(p.x, p.y, p.x + p.w, p.y + p.h, p.color)
     end
 
-    -- HUD
     ui.print("Cap " .. chapter .. " - Frame: " .. frame, 4, 4, 15)
     ui.print("Inimigos: " .. #enemies, 4, 14, 15)
     ui.print(string.format("Escuridao: %.0f%%", darkness * 100), 4, 24, 15)
-
-    -- Barra de HP no canto superior esquerdo
     draw_hp_bar(10, 40, 60, 6)
 
     if #enemies == 0 and chapter_clear_timer > 0 then
-        local txt = (chapter == 1) and "CAP 1 LIMPO!" or "VITORIA!"
-        ui.print(txt, 190, 120, 11)
+        ui.print("CAP " .. chapter .. " LIMPO!", 180, 120, 11)
     end
 end
 
 -- ============ LOOP PRINCIPAL ============
 function loop(frame)
-    -- 1) escuridao
+    -- paleta (escurecida conforme darkness)
     update_darkness()
-
-    -- 2) registra paleta escurecida
     for i = 1, #Palette do
         ui.palset(i - 1, darken_color(Palette[i], darkness))
     end
-
-    -- 3) tick do i-frame
     if player.invuln > 0 then player.invuln = player.invuln - 1 end
 
-    -- 4) input
-    local speed = 2
-    if ui.btn(LEFT)  then player.x = player.x - speed end
-    if ui.btn(RIGHT) then player.x = player.x + speed end
-    if ui.btn(UP)    then player.y = player.y - speed end
-    if ui.btn(DOWN)  then player.y = player.y + speed end
+    state_timer = state_timer + 1
 
-    local key = ui.readtext()
-    if     key == "w" then player.y = player.y - speed
-    elseif key == "s" then player.y = player.y + speed
-    elseif key == "a" then player.x = player.x - speed
-    elseif key == "d" then player.x = player.x + speed
+    if state == "title" then
+        draw_fullscreen(title_ref, "TITULO")
+        draw_press_any()
+        if state_timer > STATE_MIN_TIME and any_button_pressed() then
+            set_state("intro1")
+        end
+
+    elseif state == "intro1" then
+        draw_fullscreen(intro_ref, "INICIO")
+        draw_press_any()
+        if state_timer > STATE_MIN_TIME and any_button_pressed() then
+            set_state("play1")
+        end
+
+    elseif state == "play1" then
+        handle_input()
+        move_enemies()
+        update_projectiles()
+        handle_collisions()
+        update_chapter(frame)
+        draw_scene(frame)
+        if chapter_clear_timer >= CLEAR_DELAY then
+            set_state("intro2")
+        end
+
+    elseif state == "intro2" then
+        draw_fullscreen(final_ref, "FINAL")
+        draw_press_any()
+        if state_timer > STATE_MIN_TIME and any_button_pressed() then
+            set_state("play2")
+        end
+
+    elseif state == "play2" then
+        handle_input()
+        move_enemies()
+        update_projectiles()
+        handle_collisions()
+        update_chapter(frame)
+        draw_scene(frame)
+        if chapter_clear_timer >= CLEAR_DELAY then
+            set_state("title")
+        end
     end
-
-    player.x = clamp(player.x, 0, 480 - player.w)
-    player.y = clamp(player.y, 0, 270 - player.h)
-
-    -- 5) logica
-    move_enemies()
-    update_projectiles()
-    handle_collisions()
-    update_chapter(frame)
-
-    -- 6) desenho
-    draw_scene(frame)
 end
+
+-- alias para runtimes que chamam "update"
+update = loop
