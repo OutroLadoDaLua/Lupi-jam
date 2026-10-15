@@ -1,23 +1,11 @@
 require "palette"
 require "sprites"
 
--- ============ ASSETS DE TELA (diagnostico) ============
+-- ============ ASSETS DE TELA ============
 local title_ref, intro_ref, final_ref
-local asset_errors = { titulo = "", inicio = "", final = "" }
-
-local function try_load(module, key)
-    local ok, result = pcall(require, module)
-    if ok and result ~= nil then
-        return result
-    else
-        asset_errors[key] = tostring(result or "retornou nil")
-        return nil
-    end
-end
-
-title_ref = try_load("assets.titulo", "titulo")
-intro_ref = try_load("assets.inicio", "inicio")
-final_ref = try_load("assets.final",  "final")
+pcall(function() title_ref = require "assets.titulo" end)
+pcall(function() intro_ref = require "assets.inicio" end)
+pcall(function() final_ref = require "assets.final"  end)
 
 -- ============ ESTADO GLOBAL ============
 local player = {
@@ -34,9 +22,9 @@ local chapter_clear_timer = 0
 local CLEAR_DELAY = 60
 
 -- Maquina de estados
-local state = "title"       -- title | intro1 | play1 | intro2 | play2
+local state = "title"
 local state_timer = 0
-local STATE_MIN_TIME = 30   -- 0.5s antes de aceitar "qualquer botao"
+local STATE_MIN_TIME = 30
 
 -- Escurecimento
 local darkness            = 0
@@ -49,24 +37,28 @@ local HIT_DARK_BURST      = 0.06
 local HIT_DAMAGE     = 1
 local CONTACT_DAMAGE = 1
 
+-- Ataque do jogador
+local attack = {
+    active = false,
+    timer = 0,
+    duration = 15,
+    cooldown = 0,
+    cooldown_max = 25,
+    range = 18,
+    w = 20, h = 20
+}
+
+-- Direcao que o jogador olha
+local facing = { x = 1, y = 0 }
+
+-- Fim de jogo
+local gameover = false
+
 -- ============ UTIL ============
 local function clamp(v, lo, hi)
     if v < lo then return lo end
     if v > hi then return hi end
     return v
-end
-
-local function draw_fullscreen(ref, fallback_text)
-    ui.cls(0)
-    ui.camera(0, 0)
-    ui.clip(0, 0, 480, 270)
-    if ref then
-        -- imagem 240x135 → centraliza em 480x270
-        -- se o console for 240x135 interno, troque por (0, 0)
-        ui.spr(ref, (480 - 240) / 2, (270 - 135) / 2)
-    else
-        ui.print(fallback_text or "?", 200, 120, 15)
-    end
 end
 
 local function radius(o) return math.max(o.w, o.h) / 2 end
@@ -93,7 +85,6 @@ local function darken_color(c, f)
     return r * 1024 + g * 32 + b
 end
 
--- "Qualquer botao" — checa gamepad + teclado
 local function any_button_pressed()
     local btns = { BTN_Z, BTN_X, BTN_F, BTN_G, BTN_Q, BTN_E,
                    LEFT, RIGHT, UP, DOWN }
@@ -195,14 +186,17 @@ end
 local function set_state(s)
     state = s
     state_timer = 0
-    if s == "play1" then
-        reset_player(); darkness = 0; start_chapter(1)
-    elseif s == "play2" then
-        reset_player(); darkness = 0; start_chapter(2)
+    if s == "play1" or s == "play2" then
+        reset_player()
+        darkness = 0
+        attack.active = false
+        attack.cooldown = 0
+        attack.timer = 0
+        gameover = false
+        start_chapter(s == "play1" and 1 or 2)
     end
 end
 
--- inicializa no titulo (nao no play1)
 reset_player()
 start_chapter(1)
 
@@ -254,12 +248,64 @@ local function handle_collisions()
     end
 end
 
--- ============ TRANSICAO (so conta o timer; quem decide eh o loop) ============
+-- ============ ATAQUE ============
+local function try_attack()
+    if attack.cooldown > 0 or attack.active then return end
+    attack.active = true
+    attack.timer = attack.duration
+    attack.cooldown = attack.cooldown_max
+end
+
+local function attack_hitbox()
+    local cx = player.x + player.w / 2
+    local cy = player.y + player.h / 2
+    return {
+        x = cx + facing.x * attack.range - attack.w / 2,
+        y = cy + facing.y * attack.range - attack.h / 2,
+        w = attack.w, h = attack.h
+    }
+end
+
+local function update_attack()
+    if attack.cooldown > 0 then attack.cooldown = attack.cooldown - 1 end
+    if not attack.active then return end
+
+    attack.timer = attack.timer - 1
+    if attack.timer <= 0 then
+        attack.active = false
+        return
+    end
+
+    -- durante o ataque o jogador esta invulneravel
+    if player.invuln < attack.timer then
+        player.invuln = attack.timer
+    end
+
+    -- dano em inimigos dentro da hitbox
+    local hb = attack_hitbox()
+    for i = #enemies, 1, -1 do
+        local e = enemies[i]
+        local e_box = { x = e.x, y = e.y, w = e.w, h = e.h }
+        if rect_overlap(hb, e_box) then
+            e.hp = e.hp - 1
+            if e.hp <= 0 then table.remove(enemies, i) end
+        end
+    end
+end
+
+-- ============ TRANSICAO DE CAPITULO ============
 local function update_chapter(frame)
     if #enemies > 0 then
         chapter_clear_timer = 0
     else
         chapter_clear_timer = chapter_clear_timer + 1
+    end
+end
+
+-- ============ FIM DE JOGO ============
+local function check_gameover()
+    if player.hp <= 0 and not gameover then
+        gameover = true
     end
 end
 
@@ -270,25 +316,30 @@ local function update_darkness()
     darkness = math.max(0, math.min(MAX_DARK, darkness))
 end
 
--- ============ INPUT DE JOGO ============
+-- ============ INPUT ============
 local function handle_input()
     local speed = 2
-    if ui.btn(LEFT)  then player.x = player.x - speed end
-    if ui.btn(RIGHT) then player.x = player.x + speed end
-    if ui.btn(UP)    then player.y = player.y - speed end
-    if ui.btn(DOWN)  then player.y = player.y + speed end
+
+    if ui.btn(LEFT)  then player.x = player.x - speed; facing.x, facing.y = -1, 0 end
+    if ui.btn(RIGHT) then player.x = player.x + speed; facing.x, facing.y =  1, 0 end
+    if ui.btn(UP)    then player.y = player.y - speed; facing.x, facing.y =  0,-1 end
+    if ui.btn(DOWN)  then player.y = player.y + speed; facing.x, facing.y =  0, 1 end
 
     if ui.readtext then
         local key = ui.readtext()
-        if     key == "w" then player.y = player.y - speed
-        elseif key == "s" then player.y = player.y + speed
-        elseif key == "a" then player.x = player.x - speed
-        elseif key == "d" then player.x = player.x + speed
+        if     key == "w" then player.y = player.y - speed; facing.x, facing.y =  0,-1
+        elseif key == "s" then player.y = player.y + speed; facing.x, facing.y =  0, 1
+        elseif key == "a" then player.x = player.x - speed; facing.x, facing.y = -1, 0
+        elseif key == "d" then player.x = player.x + speed; facing.x, facing.y =  1, 0
         end
     end
 
     player.x = clamp(player.x, 0, 480 - player.w)
     player.y = clamp(player.y, 0, 270 - player.h)
+
+    if ui.btnp(BTN_Z) or ui.btnp(BTN_X) then
+        try_attack()
+    end
 end
 
 -- ============ BARRA DE HP ============
@@ -319,7 +370,8 @@ local function draw_fullscreen(ref, fallback_text)
     ui.camera(0, 0)
     ui.clip(0, 0, 480, 270)
     if ref then
-        ui.spr(ref, 0, 0)
+        -- imagem 240x135 centralizada em 480x270
+        ui.spr(ref, (480 - 240) / 2, (270 - 135) / 2)
     else
         ui.print(fallback_text or "?", 200, 120, 15)
     end
@@ -337,6 +389,7 @@ local function draw_scene(frame)
     ui.camera(0, 0)
     ui.clip(0, 0, 480, 270)
 
+    -- jogador (pisca durante i-frame)
     local blink = player.invuln > 0 and (math.floor(player.invuln / 4) % 2 == 0)
     if not blink then
         ui.rectfill(player.x, player.y,
@@ -344,6 +397,13 @@ local function draw_scene(frame)
                     player.y + player.h, 7)
     end
 
+    -- hitbox do ataque (visual)
+    if attack.active then
+        local hb = attack_hitbox()
+        ui.rectfill(hb.x, hb.y, hb.x + hb.w, hb.y + hb.h, 15)
+    end
+
+    -- inimigos
     for _, e in ipairs(enemies) do
         ui.circfill(e.x + e.w / 2, e.y + e.h / 2, radius(e), e.color)
         if e.max_hp > 1 then
@@ -356,10 +416,12 @@ local function draw_scene(frame)
         end
     end
 
+    -- projeteis
     for _, p in ipairs(projectiles) do
         ui.rectfill(p.x, p.y, p.x + p.w, p.y + p.h, p.color)
     end
 
+    -- HUD
     ui.print("Cap " .. chapter .. " - Frame: " .. frame, 4, 4, 15)
     ui.print("Inimigos: " .. #enemies, 4, 14, 15)
     ui.print(string.format("Escuridao: %.0f%%", darkness * 100), 4, 24, 15)
@@ -372,27 +434,6 @@ end
 
 -- ============ LOOP PRINCIPAL ============
 function loop(frame)
-
-    function loop(frame)
-    -- registra paleta
-    for i = 1, #Palette do ui.palset(i - 1, Palette[i]) end
-
-    -- DIAGNOSTICO dos assets (aparece nos primeiros 5 segundos)
-    if frame < 300 then
-        ui.cls(0)
-        ui.print("titulo: " .. (title_ref and "OK" or ("FALHOU -> " .. asset_errors.titulo)), 4, 4, 15)
-        ui.print("inicio: " .. (intro_ref and "OK" or ("FALHOU -> " .. asset_errors.inicio)), 4, 14, 15)
-        ui.print("final:  " .. (final_ref and "OK" or ("FALHOU -> " .. asset_errors.final)),  4, 24, 15)
-        ui.print("require paths tentados:", 4, 44, 11)
-        ui.print("  assets.titulo", 4, 54, 11)
-        ui.print("  assets.inicio", 4, 64, 11)
-        ui.print("  assets.final",  4, 74, 11)
-        return
-    end
-
-    -- ... resto do loop original
-end
-
     -- paleta (escurecida conforme darkness)
     update_darkness()
     for i = 1, #Palette do
@@ -418,12 +459,17 @@ end
 
     elseif state == "play1" then
         handle_input()
+        update_attack()
         move_enemies()
         update_projectiles()
         handle_collisions()
         update_chapter(frame)
         draw_scene(frame)
-        if chapter_clear_timer >= CLEAR_DELAY then
+
+        check_gameover()
+        if gameover then
+            set_state("gameover")
+        elseif chapter_clear_timer >= CLEAR_DELAY then
             set_state("intro2")
         end
 
@@ -436,12 +482,28 @@ end
 
     elseif state == "play2" then
         handle_input()
+        update_attack()
         move_enemies()
         update_projectiles()
         handle_collisions()
         update_chapter(frame)
         draw_scene(frame)
-        if chapter_clear_timer >= CLEAR_DELAY then
+
+        check_gameover()
+        if gameover then
+            set_state("gameover")
+        elseif chapter_clear_timer >= CLEAR_DELAY then
+            set_state("title")
+        end
+
+    elseif state == "gameover" then
+        ui.cls(0)
+        ui.rectfill(0, 0, 480, 270, 0)
+        ui.print("GAME OVER", 200, 120, 8)
+        if math.floor(state_timer / 30) % 2 == 0 then
+            ui.print("Pressione qualquer botao", 160, 145, 15)
+        end
+        if state_timer > STATE_MIN_TIME and any_button_pressed() then
             set_state("title")
         end
     end
