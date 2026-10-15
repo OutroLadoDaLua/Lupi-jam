@@ -1,16 +1,23 @@
 require "palette"
 require "sprites"
 
--- ============ ASSETS DE TELA ============
--- As imagens sao 240x135 (metade da resolucao 480x270).
--- O pipeline Lua provavelmente as expoe como modulos em "assets.*".
--- pcall evita crash se algum arquivo faltar.
-
+-- ============ ASSETS DE TELA (diagnostico) ============
 local title_ref, intro_ref, final_ref
+local asset_errors = { titulo = "", inicio = "", final = "" }
 
-pcall(function() title_ref = require "assets.titulo" end)
-pcall(function() intro_ref = require "assets.inicio" end)
-pcall(function() final_ref = require "assets.final"  end)
+local function try_load(module, key)
+    local ok, result = pcall(require, module)
+    if ok and result ~= nil then
+        return result
+    else
+        asset_errors[key] = tostring(result or "retornou nil")
+        return nil
+    end
+end
+
+title_ref = try_load("assets.titulo", "titulo")
+intro_ref = try_load("assets.inicio", "inicio")
+final_ref = try_load("assets.final",  "final")
 
 -- ============ ESTADO GLOBAL ============
 local player = {
@@ -366,17 +373,24 @@ end
 -- ============ LOOP PRINCIPAL ============
 function loop(frame)
 
-    if frame == 1 then
-    ui.cls(0)
-    -- retangulo nos 4 cantos do suposto canvas 480x270
-    ui.rect(0, 0, 479, 269, 15)          -- contorno da tela inteira
-    -- retangulo em 240x135
-    ui.rect(0, 0, 239, 134, 8)           -- contorno do "meio"
-    -- linhas de referencia
-    ui.line(240, 0, 240, 270, 11)        -- linha central vertical
-    ui.line(0, 135, 480, 135, 11)        -- linha central horizontal
-    ui.print("480x270 box", 4, 4, 15)
-    ui.print("240x135 box", 4, 140, 8)
+    function loop(frame)
+    -- registra paleta
+    for i = 1, #Palette do ui.palset(i - 1, Palette[i]) end
+
+    -- DIAGNOSTICO dos assets (aparece nos primeiros 5 segundos)
+    if frame < 300 then
+        ui.cls(0)
+        ui.print("titulo: " .. (title_ref and "OK" or ("FALHOU -> " .. asset_errors.titulo)), 4, 4, 15)
+        ui.print("inicio: " .. (intro_ref and "OK" or ("FALHOU -> " .. asset_errors.inicio)), 4, 14, 15)
+        ui.print("final:  " .. (final_ref and "OK" or ("FALHOU -> " .. asset_errors.final)),  4, 24, 15)
+        ui.print("require paths tentados:", 4, 44, 11)
+        ui.print("  assets.titulo", 4, 54, 11)
+        ui.print("  assets.inicio", 4, 64, 11)
+        ui.print("  assets.final",  4, 74, 11)
+        return
+    end
+
+    -- ... resto do loop original
 end
 
     -- paleta (escurecida conforme darkness)
