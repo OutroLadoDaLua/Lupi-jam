@@ -284,7 +284,7 @@ local function draw_scene(frame)
 end
 
 -- ============ LOOP PRINCIPAL ============
-function update(frame)
+function loop(frame)
     -- 1) escuridao
     update_darkness()
 
